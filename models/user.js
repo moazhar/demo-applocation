@@ -32,6 +32,16 @@ const userSchema = mongoose.Schema({
         type: Array,
         default: []
     },
+    notifications: [{
+        time_posted: {
+            type: Date,
+            required: true
+        },
+        posted_by: {
+            type: String,
+            required: true
+        }
+    }],
     tokens: [{
         token: {
             type: String,

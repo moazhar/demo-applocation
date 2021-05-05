@@ -17,53 +17,44 @@ const singleUpload = upload.single('image');
 userRouter.post('/signup',
     validatePassword,
     async (req, res) => {
-    const { name, username, password } = req.body;
+        const { name, username, password } = req.body;
 
-    res.setHeader('Content-Type', 'application/json');
-    try {
-        if (!username || !password || !name) {
-            return res.status(400).send({
-                errorCode: 400,
-                errorMessage: `Not all required fields are passed(username, password, name)`
+        res.setHeader('Content-Type', 'application/json');
+        try {
+            if (!username || !password || !name) {
+                return res.status(400).send({
+                    errorCode: 400,
+                    errorMessage: `Not all required fields are passed(username, password, name)`
+                });
+            }
+            // Check if user exists in db if yes? throw Error 409 
+            const result = await Users.find({ username: username });
+            if (result.length > 0) {
+                return res.status(409).send({
+                    errorCode: 409,
+                    errorMessage: `Conflicting username: ${username}`
+                })
+            }
+            // Hash the password
+            const hashPassword = await generateHashPassword(password);
+
+            const user = new Users({
+                name,
+                username,
+                password: hashPassword
+            });
+
+            // Save user details
+            await user.save();
+
+            return res.status(201).send(_.pick(user, ['username', '_id']));
+        } catch (ex) {
+            res.status(500).send({
+                errorCode: 500,
+                errorMessage: `Internal Server Error! ${ex}`
             });
         }
-        // Check if user exists in db if yes? throw Error 409 
-        const result = await Users.find({ username: username });
-        if (result.length > 0) {
-            return res.status(409).send({
-                errorCode: 409,
-                errorMessage: `Conflicting username: ${username}`
-            })
-        }
-        // Hash the password
-        const hashPassword = await generateHashPassword(password);
-
-        const user = new Users({
-            name,
-            username,
-            password: hashPassword
-        });
-        // Generate token for a new user
-        const token = await user.generateAuthToken();
-        console.log(token);
-
-        // Save generated token in a client side using cookie
-        res.cookie('jwt_token', token, {
-            expires: new Date(Date.now() + 5000),
-            httpOnly: true
-        });
-
-        // Save user details
-        await user.save();
-
-        return res.status(201).send(_.pick(user, ['username', '_id']));
-    } catch (ex) {
-        res.status(500).send({
-            errorCode: 500,
-            errorMessage: `Internal Server Error! ${ex}`
-        });
-    }
-});
+    });
 
 // API to log in a user
 userRouter.post('/login', async (req, res) => {
@@ -107,7 +98,7 @@ userRouter.post('/login', async (req, res) => {
 });
 
 // API to follow a particular user
-userRouter.put('/:id/follow',
+userRouter.patch('/:id/follow',
     authenticate,
     async (req, res) => {
         if (req.headers.userId !== req.params.id) {
@@ -134,7 +125,7 @@ userRouter.put('/:id/follow',
     });
 
 // API to unfollow a particular user
-userRouter.put('/:id/unfollow',
+userRouter.patch('/:id/unfollow',
     authenticate,
     async (req, res) => {
         if (req.headers.userid !== req.params.id) {
@@ -183,13 +174,16 @@ userRouter.post('/:id/posts',
 
             if (followers.length > 0) {
                 // add this post in the feed of every follower of this user
-                followers.forEach((follower) => {
+                followers.forEach(async (follower) => {
                     // call set function of redis with key: follower, value: imageURL
-                    redis.postData(follower, imageUrl).then((data) => {
-                        console.log(`Data posted successfully: ${data}`);
-                    }).catch((ex) => {
-                        throw ex;
-                    });
+                    await redis.postData(follower, imageUrl);
+                    console.log(`Feeds added for folllower: ${follower}`);
+                    
+                    let time = new Date();
+                    let source = user.name;
+                    await Users.findByIdAndUpdate(follower,
+                        { notifications: { time_posted: time, posted_by: source } });
+                    console.log(`Notification is been set for the follower: ${follower}`);
                 });
             }
 
@@ -205,25 +199,68 @@ userRouter.post('/:id/posts',
         }
     });
 
+// API to get all notifications available for a particular user
+userRouter.get('/:id/notifications',
+    authenticate,
+    async (req, res) => {
+        const userid = req.params.id;
+
+        res.setHeader('Content-Type', 'application/json');
+        try {
+            const user = await Users.findById(userid);
+            if (!user) {
+                return res.status(400).send({
+                    errorCode: 400,
+                    errorMessage: `Invalid user: ${userid}`
+                });
+            }
+
+            const notifications = user.notifications;
+            let notificationArray = [];
+
+            if (notifications.length > 0) {
+                notifications.forEach((notification) => {
+                    let message = ``;
+                    let posted_by = notification.posted_by;
+                    message += `${posted_by} shared a post`;
+                    notificationArray.push(message);
+                });
+            }
+            if (notificationArray.length === 0) {
+                return res.status(200).send(`Empty notifications`);
+            }
+            res.status(200).send({
+                code: 200,
+                notifications: notificationArray
+            })
+        } catch (ex) {
+            res.status(500).send({
+                errorCode: 500,
+                errorMessage: `Internal Server Error! ${ex}`
+            });
+        }
+
+    });
+
 // API to get all the feeds available for a user
 userRouter.get('/:id/feeds',
     authenticate,
     async (req, res) => {
-    const userid = req.params.id;
+        const userid = req.params.id;
 
-    res.setHeader('Content-Type', 'application/json');
-    redis.getData(userid).then((data) => {
-        res.status(200).send({
-            _id: userid,
-            data: data
-        })
-    }).catch((ex) => {
-        res.status(500).send({
-            errorCode: 500,
-            errorMessage: `Internal Server Error! ${ex}`
+        res.setHeader('Content-Type', 'application/json');
+        redis.getData(userid).then((data) => {
+            res.status(200).send({
+                _id: userid,
+                data: data
+            })
+        }).catch((ex) => {
+            res.status(500).send({
+                errorCode: 500,
+                errorMessage: `Internal Server Error! ${ex}`
+            });
         });
-    });
-})
+    })
 
 // API to logout a user
 userRouter.delete('/logout',
