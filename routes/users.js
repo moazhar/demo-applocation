@@ -35,6 +35,7 @@ userRouter.post('/signup',
                     errorMessage: `Conflicting username: ${username}`
                 })
             }
+
             // Hash the password
             const hashPassword = await generateHashPassword(password);
 
@@ -44,6 +45,10 @@ userRouter.post('/signup',
                 password: hashPassword
             });
 
+            // Generate token for incoming user
+            const token = await user.generateAuthToken();
+            console.log(token);
+            
             // Save user details
             await user.save();
 
@@ -101,12 +106,13 @@ userRouter.post('/login', async (req, res) => {
 userRouter.patch('/:id/follow',
     authenticate,
     async (req, res) => {
-        if (req.headers.userId !== req.params.id) {
+        const currentUserId = req.user._id.toString();
+        if (currentUserId !== req.params.id) {
             try {
                 const user = await Users.findById(req.params.id); // following user id
-                const currentUser = await Users.findById(req.headers.userid); // follower user id
-                if (!user.followers.includes(req.headers.userId)) {
-                    await user.updateOne({ $push: { followers: req.headers.userid } });
+                const currentUser = await Users.findById(currentUserId); // follower user id
+                if (!user.followers.includes(currentUserId)) {
+                    await user.updateOne({ $push: { followers: currentUserId } });
                     await currentUser.updateOne({ $push: { following: req.params.id } });
 
                     res.status(204).send();
@@ -128,12 +134,13 @@ userRouter.patch('/:id/follow',
 userRouter.patch('/:id/unfollow',
     authenticate,
     async (req, res) => {
-        if (req.headers.userid !== req.params.id) {
+        const currentUserId = req.user._id.toString();
+        if (currentUserId !== req.params.id) {
             try {
                 const user = await Users.findById(req.params.id); // following user id
-                const currentUser = await Users.findById(req.headers.userid); // follower user id
-                if (user.followers.includes(req.headers.userid)) {
-                    await user.updateOne({ $pull: { followers: req.headers.userid } });
+                const currentUser = await Users.findById(currentUserId); // follower user id
+                if (user.followers.includes(currentUserId)) {
+                    await user.updateOne({ $pull: { followers: currentUserId } });
                     await currentUser.updateOne({ $pull: { following: req.params.id } });
 
                     res.status(204).send();
@@ -152,11 +159,11 @@ userRouter.patch('/:id/unfollow',
     });
 
 // API to allow a user to post something
-userRouter.post('/:id/posts',
+userRouter.post('/posts',
     authenticate,
     singleUpload,
     async (req, res) => {
-        const userid = req.params.id;
+        const userid = req.user._id.toString();
         const imageUrl = req.file.location;
 
         res.setHeader('Content-Type', 'application/json');
@@ -178,7 +185,7 @@ userRouter.post('/:id/posts',
                     // call set function of redis with key: follower, value: imageURL
                     await redis.postData(follower, imageUrl);
                     console.log(`Feeds added for folllower: ${follower}`);
-                    
+
                     let time = new Date();
                     let source = user.name;
                     await Users.findByIdAndUpdate(follower,
@@ -200,10 +207,10 @@ userRouter.post('/:id/posts',
     });
 
 // API to get all notifications available for a particular user
-userRouter.get('/:id/notifications',
+userRouter.get('/notifications',
     authenticate,
     async (req, res) => {
-        const userid = req.params.id;
+        const userid = req.user._id.toString();
 
         res.setHeader('Content-Type', 'application/json');
         try {
@@ -243,10 +250,10 @@ userRouter.get('/:id/notifications',
     });
 
 // API to get all the feeds available for a user
-userRouter.get('/:id/feeds',
+userRouter.get('/feeds',
     authenticate,
     async (req, res) => {
-        const userid = req.params.id;
+        const userid = req.user._id.toString();
 
         res.setHeader('Content-Type', 'application/json');
         redis.getData(userid).then((data) => {
